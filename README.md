@@ -59,6 +59,8 @@ The list of environment variables is available in `.env.test`. To complete the v
 
 Ensure that the values are correctly added to your `.env` file to configure the API keys properly.
 
+Set `SPOTIFY_API_URL=https://api-partner.spotify.com/pathfinder/v2` in your local and deployment environments for Spotify's GraphQL POST requests. Spotify metadata requests use a crawler User-Agent to obtain the track's Open Graph tags instead of the generic web-player page.
+
 - To get the app up:
 ```sh
 bun install

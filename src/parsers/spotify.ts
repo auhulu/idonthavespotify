@@ -36,7 +36,8 @@ export const getSpotifyMetadata = async (id: string, link: string) => {
   }
 
   try {
-    let html = await fetchMetadata(link);
+    const headers = { 'User-Agent': 'facebookexternalhit/1.1' };
+    let html = await fetchMetadata(link, headers);
 
     if (SPOTIFY_LINK_MOBILE_REGEX.test(link)) {
       link = html.match(SPOTIFY_LINK_DESKTOP_REGEX)?.[0] ?? '';
@@ -51,6 +52,7 @@ export const getSpotifyMetadata = async (id: string, link: string) => {
       logger.info(`[${getSpotifyMetadata.name}] parse metadata (desktop): ${link}`);
 
       html = await HttpClient.get<string>(link, {
+        headers,
         retries: 2,
       });
     }

@@ -16,7 +16,8 @@ import { logger } from '~/utils/logger';
 import { getServiceGuard } from '~/utils/service-guard';
 
 interface SpotifyGraphQLResponse {
-  data: {
+  errors?: Array<{ message: string }>;
+  data?: {
     searchV2?: SpotifySearchResult;
     search?: SpotifySearchResult;
   };
@@ -82,7 +83,8 @@ const SEARCH_DESKTOP_HASH =
   '75bbf6bfcfdf85b8fc828417bfad92b7cd66bf7f556d85670f4da8292373ebec';
 
 const PLAYER_JS_REGEX = /"(https:\/\/[^" ]+\/(?:mobile-)?web-player\.[0-9a-f]+\.js)"/;
-const SECRETS_REGEX = /\{\s*secret\s*:\s*["']([^"']+)["']\s*,\s*version\s*:\s*(\d+)\s*\}/g;
+const SECRETS_REGEX =
+  /\{\s*secret\s*:\s*["']([^"']+)["']\s*,\s*version\s*:\s*(\d+)\s*\}/g;
 
 function uriToUrl(uri: string): string {
   // spotify:track:abc123 -> https://open.spotify.com/track/abc123
@@ -119,28 +121,35 @@ export async function getSpotifyLink(
       offset: 0,
       limit: 4,
       numberOfTopResults: 5,
+      includeAudiobooks: true,
+      includeArtistHasConcertsField: false,
+      includePreReleases: false,
     };
     const extensions = {
       persistedQuery: { version: 1, sha256Hash: SEARCH_DESKTOP_HASH },
     };
 
-    const url = new URL(`${ENV.adapters.spotify.apiUrl}/query`);
-    url.searchParams.set('operationName', 'searchDesktop');
-    url.searchParams.set('variables', JSON.stringify(variables));
-    url.searchParams.set('extensions', JSON.stringify(extensions));
+    const data = await HttpClient.post<SpotifyGraphQLResponse>(
+      `${ENV.adapters.spotify.apiUrl}/query`,
+      { operationName: 'searchDesktop', variables, extensions },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'app-platform': 'WebPlayer',
+          'Content-Type': 'application/json',
+        },
+      }
+    );
 
-    const data = await HttpClient.get<SpotifyGraphQLResponse>(url.toString(), {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'app-platform': 'WebPlayer',
-      },
-    });
-
-    guard.recordSuccess();
+    if (data.errors?.length) {
+      throw new Error(data.errors.map(error => error.message).join('; '));
+    }
 
     const search = data.data?.searchV2 ?? data.data?.search;
     if (!search) {
-      throw new Error(`No search results in response: ${JSON.stringify(data).substring(0, 200)}`);
+      throw new Error(
+        `No search results in response: ${JSON.stringify(data).substring(0, 200)}`
+      );
     }
 
     const candidates = extractCandidates(search, searchType);
@@ -154,6 +163,8 @@ export async function getSpotifyLink(
     if (!bestMatch) {
       throw new Error('No valid matches found.');
     }
+
+    guard.recordSuccess();
 
     logger.info(
       `[Spotify] Best match score: ${highestScore.toFixed(3)} (verified: ${bestMatch.isVerified ? 'yes' : 'no'}, available: ${!bestMatch.notAvailable ? 'yes' : 'no'})`
@@ -176,7 +187,10 @@ export async function getSpotifyLink(
   }
 }
 
-function extractCandidates(search: SpotifySearchResult, searchType: string): MatchCandidate[] {
+function extractCandidates(
+  search: SpotifySearchResult,
+  searchType: string
+): MatchCandidate[] {
   switch (searchType) {
     case 'track':
       return (search.tracks?.items ?? []).map(({ track }) => ({
