@@ -1,4 +1,5 @@
 import {
+  ADAPTERS_QUERY_LIMIT,
   RESPONSE_COMPARE_MIN_INCLUSION_SCORE,
   RESPONSE_COMPARE_MIN_SCORE,
 } from '~/config/constants';
@@ -6,7 +7,11 @@ import { Adapter, MetadataType, Parser } from '~/config/enum';
 import { ENV } from '~/config/env';
 import { cacheSearchResultLink, getCachedSearchResultLink } from '~/services/cache';
 import type { SearchMetadata, SearchResultLink } from '~/services/search';
-import { getResultWithBestScore } from '~/utils/compare';
+import {
+  findBestMatch,
+  getResultWithBestScore,
+  type MatchCandidate,
+} from '~/utils/compare';
 import HttpClient from '~/utils/http-client';
 import { logger } from '~/utils/logger';
 import { getCheerioDoc } from '~/utils/scraper';
@@ -20,6 +25,21 @@ const APPLE_MUSIC_SEARCH_TYPES = {
   [MetadataType.Podcast]: undefined,
   [MetadataType.Show]: undefined,
 };
+
+function isSongUrl(href: string): boolean {
+  try {
+    const url = new URL(href);
+    if (!['music.apple.com', 'geo.music.apple.com'].includes(url.hostname)) {
+      return false;
+    }
+    return (
+      (/\/album\//.test(url.pathname) && /^\d+$/.test(url.searchParams.get('i') ?? '')) ||
+      /\/song\/(?:[^/]+\/)?\d+\/?$/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export async function getAppleMusicLink(
   query: string,
@@ -40,7 +60,7 @@ export async function getAppleMusicLink(
     sourceParser,
     sourceId
   );
-  if (cache) {
+  if (cache && (metadata.type !== MetadataType.Song || isSongUrl(cache.url))) {
     logger.info(`[Apple Music] (${url}) cache hit`);
     return cache;
   }
@@ -56,11 +76,37 @@ export async function getAppleMusicLink(
     guard.recordSuccess();
     const doc = getCheerioDoc(html);
 
-    const listElements = doc(
-      `${searchType ? 'div[aria-label="' + searchType + '"]' : ''} a[href^="https://music.apple.com/"]:lt(3)`
-    );
-
-    const { href, score } = getResultWithBestScore(doc, listElements, query);
+    let href: string;
+    let score: number;
+    if (metadata.type === MetadataType.Song) {
+      const candidates: MatchCandidate[] = [];
+      doc('div[aria-label="Songs"] [data-testid="track-lockup"]').each((_, element) => {
+        const row = doc(element);
+        const titleLink = row.find('[data-testid="track-lockup-title"] a[href]').first();
+        const url = titleLink.attr('href');
+        const title = titleLink.text().trim();
+        if (url && title && isSongUrl(url)) {
+          candidates.push({
+            title,
+            artist: row.find('[data-testid="track-lockup-subtitle"]').text().trim(),
+            url,
+          });
+        }
+      });
+      const { bestMatch, highestScore } = findBestMatch(
+        candidates.slice(0, ADAPTERS_QUERY_LIMIT),
+        query,
+        Adapter.AppleMusic
+      );
+      if (!bestMatch) throw new Error(`No Apple Music song found for: ${query}`);
+      href = bestMatch.url;
+      score = highestScore;
+    } else {
+      const listElements = doc(
+        `div[aria-label="${searchType}"] a[href^="https://music.apple.com/"]:lt(3)`
+      );
+      ({ href, score } = getResultWithBestScore(doc, listElements, query));
+    }
 
     // Convert music.apple.com links to geo.music.apple.com links for better results
     const geoUrl = href.replace('music.apple.com', 'geo.music.apple.com');
