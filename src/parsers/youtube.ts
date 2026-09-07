@@ -91,10 +91,9 @@ export const getYouTubeMetadata = async (id: string, source: string) => {
     const { title, description, thumbnails } = snippet;
     const image = thumbnails?.url;
 
-    const processedTitle = title
-      .replace(/[^\w\s]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Preserve Unicode and brackets so query cleanup can distinguish video labels
+    // from song names and version information.
+    const processedTitle = title.replace(/\s+/g, ' ').trim();
 
     logger.info(
       `[YouTube] Original title: "${title}". Processed title: "${processedTitle}"`
@@ -118,16 +117,31 @@ export const getYouTubeMetadata = async (id: string, source: string) => {
 
 export const getYouTubeQueryFromMetadata = (metadata: SearchMetadata) => {
   let query = metadata.title
-    .replace(/\s*\([^)]*\)/g, '')
+    .replace(
+      /\s*(?:\((?:official\s+)?(?:(?:music|lyric)\s+video|video|audio|lyrics?)(?:\s+(?:HD|4K))?\)|\[(?:official\s+)?(?:(?:music|lyric)\s+video|video|audio|lyrics?)(?:\s+(?:HD|4K))?\])/gi,
+      ''
+    )
+    // Also handle titles cached by older versions that stripped the brackets.
+    .replace(/\s+official\s+(?:(?:music|lyric)\s+video|video|audio)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
   if (metadata.type === MetadataType.Song) {
-    const matches = metadata.description?.match(/(?:·|&)\s*([^·&℗]+)/g);
-    const artists = [
-      ...new Set(matches?.map(match => match.trim().replace(/^[·&]\s*/, '')) || []),
-    ];
-    query = matches ? `${query} ${artists[0]}` : query;
+    // Only the first metadata line of a distributor-generated description is
+    // structured song/artist data. Credits and lyrics in ordinary descriptions
+    // may contain both "&" and "·", so never scan the entire description.
+    const lines = metadata.description?.trim().split(/\r?\n/);
+    if (lines?.[0].startsWith('Provided to YouTube by ')) {
+      const songLine = lines.slice(1).find(line => line.trim());
+      const [title, artist] = songLine?.split(' · ').map(part => part.trim()) ?? [];
+      if (
+        title?.normalize('NFKC').toLowerCase() ===
+          query.normalize('NFKC').toLowerCase() &&
+        artist
+      ) {
+        query = `${query} ${artist}`;
+      }
+    }
   }
 
   if (metadata.type === MetadataType.Album) {
