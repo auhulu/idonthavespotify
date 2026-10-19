@@ -76,6 +76,19 @@ bun install
 bun dev
 ```
 
+## Deploy to Railway
+
+1. Push this repository, including `railway.json`, to your GitHub repository.
+2. In Railway, choose **New Project → Deploy from GitHub repo** and select the repository. Railway builds the existing Dockerfile and checks `/` before activating the deployment. Leave the build and start command overrides empty.
+3. In the service's **Variables → Raw Editor**, add the platform URLs from `.env.test` and your real API credentials. Do not use the placeholder credentials from `.env.test`. Set `NODE_ENV=production` and `LOG_LEVEL=info`. Railway supplies `PORT` automatically.
+4. Under **Settings → Networking**, select **Generate Domain**, then set `APP_URL=https://<your-generated-domain>` in Variables and apply the changes.
+
+The application uses an in-memory cache, so no database service or volume is required. Cached results are cleared when the service restarts.
+
+`URL_SHORTENER_API_URL` and `URL_SHORTENER_API_KEY` can be omitted to disable the optional shortener. Do not copy its localhost URL from `.env.test` into production. Configure `UMAMI_API_URL` only if you use Umami analytics.
+
+You can also deploy locally with the [Railway CLI](https://docs.railway.com/cli/deploying): run `railway login`, then `railway init` for a new project (or `railway link` for an existing project), select or create a service, and run `railway up`. Configure the variables and public domain in the Railway dashboard as above.
+
 ## More info
 
 Contributions are more than welcome, just open a PR and I'll review it promptly.
